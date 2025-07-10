@@ -76,7 +76,6 @@
 
       const callAppsScript = async (action, payload) => {
           try {
-              // First, try with CORS mode
               const response = await fetch(APPS_SCRIPT_URL, {
                   method: 'POST',
                   mode: 'cors',
@@ -91,28 +90,17 @@
                   throw new Error(`HTTP error! status: ${response.status}`);
               }
 
-              return await response.json();
-          } catch (error) {
-              // If CORS fails, try with no-cors mode (fallback)
-              if (error.message.includes('CORS') || error.message.includes('fetch')) {
-                  try {
-                      const response = await fetch(APPS_SCRIPT_URL, {
-                          method: 'POST',
-                          mode: 'no-cors',
-                          headers: {
-                              'Content-Type': 'application/json',
-                          },
-                          body: JSON.stringify({ action, payload }),
-                      });
-                      
-                      // With no-cors, we can't read the response, so we assume success
-                      // This is a limitation, but better than complete failure
-                      return { status: 'success', message: 'Request sent successfully' };
-                  } catch (noCorsError) {
-                      throw new Error(`Failed to connect to server. Please check your Apps Script URL and deployment settings. Original error: ${error.message}`);
-                  }
+              const result = await response.json();
+              
+              // Ensure the response has the expected structure
+              if (typeof result !== 'object' || result === null) {
+                  throw new Error('Invalid response format from server');
               }
-              throw error;
+              
+              return result;
+          } catch (error) {
+              console.error('API call failed:', error);
+              throw new Error(`Failed to connect to server: ${error.message}`);
           }
       };
 
@@ -273,24 +261,37 @@
           const isAdminLogin = estate === Estate.ADMIN;
 
           const handleResponse = (response) => {
-              if (response.status === 'success') {
+              // Handle different response formats
+              if (response && response.status === 'success') {
                   if (isCreatingAccount) {
-                      setSuccessMessage(response.data.message);
+                      setSuccessMessage(response.data?.message || 'Account created successfully');
                       setIsCreatingAccount(false);
                   } else {
                       const user = isAdminLogin 
-                          ? { email: response.data.user.email, role: 'admin' }
-                          : { email: response.data.user.email, estate: estate };
+                          ? { email: response.data?.user?.email || email, role: 'admin' }
+                          : { email: response.data?.user?.email || email, estate: estate };
                       dispatch({ type: 'LOGIN_SUCCESS', payload: user });
                   }
+              } else if (response && response.status === 'error') {
+                  const errorMessage = response.message || response.error || "Login failed. Please check your credentials.";
+                  dispatch({ type: 'LOGIN_FAIL', payload: errorMessage });
+                  setLocalError(errorMessage);
               } else {
-                  dispatch({ type: 'LOGIN_FAIL', payload: response.message || "An unknown error occurred." });
-                  setLocalError(response.message || "An unknown error occurred.");
+                  const errorMessage = "Invalid response from server. Please try again.";
+                  dispatch({ type: 'LOGIN_FAIL', payload: errorMessage });
+                  setLocalError(errorMessage);
               }
           };
 
           const handleSubmit = async (e) => {
               e.preventDefault();
+              
+              // Basic validation
+              if (!email || !password) {
+                  setLocalError('Please enter both email and password');
+                  return;
+              }
+              
               dispatch({ type: 'LOGIN_START' });
               setLocalError(null);
               setSuccessMessage(null);
@@ -304,8 +305,11 @@
                   } else {
                       response = await apiService.login(email, password, estate);
                   }
+                  
+                  console.log('API Response:', response); // Debug log
                   handleResponse(response);
               } catch (error) {
+                  console.error('Login error:', error); // Debug log
                   const errorMessage = error.message || 'Failed to connect to the server.';
                   dispatch({ type: 'LOGIN_FAIL', payload: errorMessage });
                   setLocalError(errorMessage);
@@ -640,12 +644,16 @@
                   setError(null);
                   try {
                       const response = await apiService.getLocators(state.user.estate);
-                      if (response.status === 'success') {
-                          setLocators(response.data);
-                      } else {
+                      console.log('Locators response:', response); // Debug log
+                      if (response && response.status === 'success') {
+                          setLocators(response.data || []);
+                      } else if (response && response.status === 'error') {
                           setError(response.message || 'Failed to fetch data.');
+                      } else {
+                          setError('Invalid response format from server.');
                       }
                   } catch (err) {
+                      console.error('Fetch locators error:', err); // Debug log
                       setError(err.message || 'An error occurred.');
                   } finally {
                       setIsLoading(false);
@@ -755,12 +763,16 @@
               setError(null);
               try {
                   const response = await apiService.getLocators();
-                  if (response.status === 'success') {
-                      setLocators(response.data);
-                  } else {
+                  console.log('Admin locators response:', response); // Debug log
+                  if (response && response.status === 'success') {
+                      setLocators(response.data || []);
+                  } else if (response && response.status === 'error') {
                       setError(response.message || 'Failed to fetch data.');
+                  } else {
+                      setError('Invalid response format from server.');
                   }
               } catch (err) {
+                  console.error('Fetch all data error:', err); // Debug log
                   setError(err.message || 'An error occurred.');
               } finally {
                   setIsLoading(false);
@@ -776,14 +788,18 @@
               setIsLoading(true);
               try {
                   const response = await apiService.addLocator(newLocator);
-                  if(response.status === 'success') {
-                      setLocators(prev => [...prev, response.data.newLocator]);
+                  console.log('Add locator response:', response); // Debug log
+                  if(response && response.status === 'success') {
+                      setLocators(prev => [...prev, response.data?.newLocator || newLocator]);
                       setIsAddingLocator(false);
                       setNewLocator({ estate: ESTATES[0], locatorName: '', address: '', lotArea: '', industryType: '' });
-                  } else {
+                  } else if (response && response.status === 'error') {
                       setError(response.message || 'Failed to add locator.');
+                  } else {
+                      setError('Invalid response format from server.');
                   }
               } catch (err) {
+                  console.error('Add locator error:', err); // Debug log
                   setError(err.message || 'An error occurred.');
               } finally {
                   setIsLoading(false);
@@ -794,17 +810,21 @@
               setIsLoading(true);
               try {
                   const response = await apiService.uploadContract(locatorId, contractType, file);
-                  if(response.status === 'success'){
+                  console.log('Upload contract response:', response); // Debug log
+                  if(response && response.status === 'success'){
                       setLocators(prevLocators => prevLocators.map(loc => {
                           if(loc.LocatorID === locatorId) {
-                              return {...loc, contracts: [...loc.contracts, response.data.newContract]}
+                              return {...loc, contracts: [...(loc.contracts || []), response.data?.newContract || {}]}
                           }
                           return loc;
                       }));
-                  } else {
+                  } else if (response && response.status === 'error') {
                        setError(response.message || 'Failed to upload contract.');
+                  } else {
+                       setError('Invalid response format from server.');
                   }
               } catch(err){
+                  console.error('Upload contract error:', err); // Debug log
                   setError(err.message || 'An error occurred.');
               } finally {
                   setIsLoading(false);
