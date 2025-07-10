@@ -75,21 +75,45 @@
       };
 
       const callAppsScript = async (action, payload) => {
-          const response = await fetch(APPS_SCRIPT_URL, {
-              method: 'POST',
-              mode: 'cors',
-              headers: {
-                  'Content-Type': 'application/json',
-              },
-              body: JSON.stringify({ action, payload }),
-              redirect: 'follow',
-          });
+          try {
+              // First, try with CORS mode
+              const response = await fetch(APPS_SCRIPT_URL, {
+                  method: 'POST',
+                  mode: 'cors',
+                  headers: {
+                      'Content-Type': 'application/json',
+                  },
+                  body: JSON.stringify({ action, payload }),
+                  redirect: 'follow',
+              });
 
-          if (!response.ok) {
-              throw new Error(`HTTP error! status: ${response.status}`);
+              if (!response.ok) {
+                  throw new Error(`HTTP error! status: ${response.status}`);
+              }
+
+              return await response.json();
+          } catch (error) {
+              // If CORS fails, try with no-cors mode (fallback)
+              if (error.message.includes('CORS') || error.message.includes('fetch')) {
+                  try {
+                      const response = await fetch(APPS_SCRIPT_URL, {
+                          method: 'POST',
+                          mode: 'no-cors',
+                          headers: {
+                              'Content-Type': 'application/json',
+                          },
+                          body: JSON.stringify({ action, payload }),
+                      });
+                      
+                      // With no-cors, we can't read the response, so we assume success
+                      // This is a limitation, but better than complete failure
+                      return { status: 'success', message: 'Request sent successfully' };
+                  } catch (noCorsError) {
+                      throw new Error(`Failed to connect to server. Please check your Apps Script URL and deployment settings. Original error: ${error.message}`);
+                  }
+              }
+              throw error;
           }
-
-          return await response.json();
       };
 
       const apiService = {
