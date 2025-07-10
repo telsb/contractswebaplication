@@ -1,0 +1,1009 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Aboitiz InfraCapital Contract Management System</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+    <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    <style>
+      .bg-grid-gray-700\/20 {
+        background-image: radial-gradient(circle, rgba(55, 65, 81, 0.2) 1px, transparent 1px);
+        background-size: 20px 20px;
+      }
+      .animate-spin {
+        animation: spin 1s linear infinite;
+      }
+      @keyframes spin {
+        from { transform: rotate(0deg); }
+        to { transform: rotate(360deg); }
+      }
+    </style>
+  </head>
+  <body class="bg-gray-900 text-gray-100">
+    <div id="root"></div>
+    
+    <!-- Load all components and utilities -->
+    <script type="text/babel">
+      // Constants and Types
+      const Estate = {
+          LIMA: "LIMA Estate",
+          BIZHUB: "BizHub",
+          TARI: "TARI Estate",
+          MEZ2: "MEZ2 Estate",
+          WEST_CEBU: "WEST CEBU Estate",
+          ADMIN: "ADMIN",
+          ALL: "ALL"
+      };
+
+      const ContractType = {
+          LOI: "LOI",
+          RA: "RA",
+          CTS: "CTS",
+          DOAS: "DOAS",
+          LTLA: "LTLA",
+          OTHERS: "OTHERS",
+      };
+
+      // IMPORTANT: Replace this with your deployed Google Apps Script Web App URL
+      const APPS_SCRIPT_URL = 'https://script.google.com/macros/s/AKfycbxBnZz0udSyPdeONSTtJdcbysbg5lomv95TLuvW_ElWFx_1fe1-dl2E_1FP47xzbLb_3Q/exec';
+
+      const ESTATES = [
+          Estate.LIMA,
+          Estate.BIZHUB,
+          Estate.TARI,
+          Estate.MEZ2,
+          Estate.WEST_CEBU,
+      ];
+
+      const ALL_ESTATES_WITH_ADMIN = [...ESTATES, Estate.ADMIN];
+      const CONTRACT_TYPES = Object.values(ContractType);
+
+      // API Service
+      const fileToBase64 = (file) => {
+          return new Promise((resolve, reject) => {
+              const reader = new FileReader();
+              reader.readAsDataURL(file);
+              reader.onload = () => {
+                  const result = reader.result.split(',')[1];
+                  resolve(result);
+              };
+              reader.onerror = error => reject(error);
+          });
+      };
+
+      const callAppsScript = async (action, payload) => {
+          const response = await fetch(APPS_SCRIPT_URL, {
+              method: 'POST',
+              mode: 'cors',
+              headers: {
+                  'Content-Type': 'application/json',
+              },
+              body: JSON.stringify({ action, payload }),
+              redirect: 'follow',
+          });
+
+          if (!response.ok) {
+              throw new Error(`HTTP error! status: ${response.status}`);
+          }
+
+          return await response.json();
+      };
+
+      const apiService = {
+          createAccount: (email, password) => {
+              return callAppsScript('create_account', { email, password });
+          },
+          login: (email, password, estate) => {
+              return callAppsScript('login', { email, password, estate });
+          },
+          adminLogin: (email, password) => {
+              return callAppsScript('admin_login', { email, password });
+          },
+          getLocators: (estate) => {
+              return callAppsScript('get_locators', { estate });
+          },
+          addLocator: (locatorData) => {
+              return callAppsScript('add_locator', locatorData);
+          },
+          uploadContract: async (locatorId, contractType, file) => {
+              const base64 = await fileToBase64(file);
+              const fileData = {
+                  base64,
+                  name: file.name,
+                  type: file.type
+              };
+              return callAppsScript('add_contract', { locatorId, contractType, fileData });
+          },
+      };
+
+      // Icon Components
+      const FilePdfIcon = (props) => React.createElement('svg', {
+          xmlns: "http://www.w3.org/2000/svg",
+          width: "24",
+          height: "24",
+          viewBox: "0 0 24 24",
+          fill: "none",
+          stroke: "currentColor",
+          strokeWidth: "2",
+          strokeLinecap: "round",
+          strokeLinejoin: "round",
+          ...props
+      }, [
+          React.createElement('path', { key: 1, d: "M14.5 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7.5L14.5 2z" }),
+          React.createElement('polyline', { key: 2, points: "14 2 14 8 20 8" }),
+          React.createElement('path', { key: 3, d: "M10 12v6" }),
+          React.createElement('path', { key: 4, d: "M13 18h-3a1 1 0 0 1-1-1v-1a1 1 0 0 1 1-1h1a1 1 0 0 1 1 1v1a1 1 0 0 0 1 1h1a1 1 0 0 0 1-1v-2a1 1 0 0 0-1-1h-2" })
+      ]);
+
+      const ChevronDownIcon = (props) => React.createElement('svg', {
+          xmlns: "http://www.w3.org/2000/svg",
+          width: "24",
+          height: "24",
+          viewBox: "0 0 24 24",
+          fill: "none",
+          stroke: "currentColor",
+          strokeWidth: "2",
+          strokeLinecap: "round",
+          strokeLinejoin: "round",
+          ...props
+      }, React.createElement('path', { d: "m6 9 6 6 6-6" }));
+
+      // Spinner Component
+      const Spinner = ({ size = 'md' }) => {
+          const sizeClasses = {
+              sm: 'w-4 h-4',
+              md: 'w-6 h-6',
+              lg: 'w-8 h-8',
+          };
+
+          return React.createElement('svg', {
+              className: `animate-spin ${sizeClasses[size]} text-white`,
+              xmlns: "http://www.w3.org/2000/svg",
+              fill: "none",
+              viewBox: "0 0 24 24"
+          }, [
+              React.createElement('circle', {
+                  key: 1,
+                  className: "opacity-25",
+                  cx: "12",
+                  cy: "12",
+                  r: "10",
+                  stroke: "currentColor",
+                  strokeWidth: "4"
+              }),
+              React.createElement('path', {
+                  key: 2,
+                  className: "opacity-75",
+                  fill: "currentColor",
+                  d: "M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"
+              })
+          ]);
+      };
+
+      // Header Component
+      const Header = ({ onManageClick }) => {
+          return React.createElement('header', {
+              className: "h-screen flex flex-col items-center justify-center bg-gray-900 text-center p-4 relative"
+          }, [
+              React.createElement('div', {
+                  key: 1,
+                  className: "absolute inset-0 bg-grid-gray-700/20"
+              }),
+              React.createElement('div', {
+                  key: 2,
+                  className: "relative z-10"
+              }, [
+                  React.createElement('h1', {
+                      key: 1,
+                      className: "text-4xl md:text-6xl font-extrabold text-white tracking-tight"
+                  }, "Welcome to Aboitiz InfraCapital"),
+                  React.createElement('h2', {
+                      key: 2,
+                      className: "text-4xl md:text-6xl font-extrabold text-red-600 tracking-tight mt-2"
+                  }, "Contract Management System"),
+                  React.createElement('button', {
+                      key: 3,
+                      onClick: onManageClick,
+                      className: "mt-12 text-lg font-semibold text-gray-300 border-b-2 border-transparent hover:text-white hover:border-red-600 transition-all duration-300"
+                  }, "Manage Contracts")
+              ])
+          ]);
+      };
+
+      // Estate Selector Component
+      const EstateSelector = ({ estates, onSelectEstate }) => {
+          return React.createElement('section', {
+              className: "max-w-4xl mx-auto"
+          }, React.createElement('div', {
+              className: "grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-6"
+          }, estates.map((estate) => 
+              React.createElement('button', {
+                  key: estate,
+                  onClick: () => onSelectEstate(estate),
+                  className: "group relative flex items-center justify-center p-8 bg-gray-800 border border-gray-700 rounded-lg shadow-lg hover:shadow-red-600/30 transition-all duration-300 transform hover:-translate-y-1"
+              }, [
+                  React.createElement('div', {
+                      key: 1,
+                      className: "absolute inset-0 bg-red-600 opacity-0 group-hover:opacity-10 transition-opacity duration-300"
+                  }),
+                  React.createElement('span', {
+                      key: 2,
+                      className: "relative z-10 text-xl font-bold text-gray-300 group-hover:text-white"
+                  }, estate)
+              ])
+          )));
+      };
+
+      // Login Modal Component
+      const LoginModal = ({ estate, onClose }) => {
+          const { state, dispatch } = useAppContext();
+          const [email, setEmail] = React.useState('');
+          const [password, setPassword] = React.useState('');
+          const [isCreatingAccount, setIsCreatingAccount] = React.useState(false);
+          const [localError, setLocalError] = React.useState(null);
+          const [successMessage, setSuccessMessage] = React.useState(null);
+
+          const isAdminLogin = estate === Estate.ADMIN;
+
+          const handleResponse = (response) => {
+              if (response.status === 'success') {
+                  if (isCreatingAccount) {
+                      setSuccessMessage(response.data.message);
+                      setIsCreatingAccount(false);
+                  } else {
+                      const user = isAdminLogin 
+                          ? { email: response.data.user.email, role: 'admin' }
+                          : { email: response.data.user.email, estate: estate };
+                      dispatch({ type: 'LOGIN_SUCCESS', payload: user });
+                  }
+              } else {
+                  dispatch({ type: 'LOGIN_FAIL', payload: response.message || "An unknown error occurred." });
+                  setLocalError(response.message || "An unknown error occurred.");
+              }
+          };
+
+          const handleSubmit = async (e) => {
+              e.preventDefault();
+              dispatch({ type: 'LOGIN_START' });
+              setLocalError(null);
+              setSuccessMessage(null);
+
+              try {
+                  let response;
+                  if (isCreatingAccount) {
+                      response = await apiService.createAccount(email, password);
+                  } else if (isAdminLogin) {
+                      response = await apiService.adminLogin(email, password);
+                  } else {
+                      response = await apiService.login(email, password, estate);
+                  }
+                  handleResponse(response);
+              } catch (error) {
+                  const errorMessage = error.message || 'Failed to connect to the server.';
+                  dispatch({ type: 'LOGIN_FAIL', payload: errorMessage });
+                  setLocalError(errorMessage);
+              }
+          };
+
+          return React.createElement('div', {
+              className: "fixed inset-0 bg-black bg-opacity-70 flex items-center justify-center z-50 p-4"
+          }, React.createElement('div', {
+              className: "bg-gray-800 rounded-lg shadow-2xl p-8 w-full max-w-md relative border border-gray-700"
+          }, [
+              React.createElement('button', {
+                  key: 1,
+                  onClick: onClose,
+                  className: "absolute top-3 right-3 text-gray-400 hover:text-white"
+              }, "×"),
+              React.createElement('h2', {
+                  key: 2,
+                  className: "text-2xl font-bold text-center mb-2 text-white"
+              }, isCreatingAccount ? 'Create Account' : `Login to ${estate}`),
+              React.createElement('div', {
+                  key: 3,
+                  className: "h-1 w-20 bg-red-600 mx-auto mb-6"
+              }),
+              React.createElement('form', {
+                  key: 4,
+                  onSubmit: handleSubmit
+              }, [
+                  React.createElement('div', {
+                      key: 1,
+                      className: "mb-4"
+                  }, [
+                      React.createElement('label', {
+                          key: 1,
+                          className: "block text-gray-400 text-sm font-bold mb-2",
+                          htmlFor: "email"
+                      }, "Email"),
+                      React.createElement('input', {
+                          key: 2,
+                          type: "email",
+                          id: "email",
+                          value: email,
+                          onChange: (e) => setEmail(e.target.value),
+                          required: true,
+                          className: "w-full bg-gray-700 border border-gray-600 text-white rounded py-2 px-3 focus:outline-none focus:ring-2 focus:ring-red-500"
+                      })
+                  ]),
+                  React.createElement('div', {
+                      key: 2,
+                      className: "mb-6"
+                  }, [
+                      React.createElement('label', {
+                          key: 1,
+                          className: "block text-gray-400 text-sm font-bold mb-2",
+                          htmlFor: "password"
+                      }, "Password"),
+                      React.createElement('input', {
+                          key: 2,
+                          type: "password",
+                          id: "password",
+                          value: password,
+                          onChange: (e) => setPassword(e.target.value),
+                          required: true,
+                          className: "w-full bg-gray-700 border border-gray-600 text-white rounded py-2 px-3 focus:outline-none focus:ring-2 focus:ring-red-500"
+                      })
+                  ]),
+                  localError && React.createElement('p', {
+                      key: 3,
+                      className: "text-red-500 text-xs italic mb-4"
+                  }, localError),
+                  successMessage && React.createElement('p', {
+                      key: 4,
+                      className: "text-green-400 text-xs italic mb-4"
+                  }, successMessage),
+                  React.createElement('button', {
+                      key: 5,
+                      type: "submit",
+                      disabled: state.isLoading,
+                      className: "w-full bg-red-600 hover:bg-red-700 text-white font-bold py-2 px-4 rounded transition duration-300 disabled:bg-gray-500 flex items-center justify-center"
+                  }, state.isLoading ? React.createElement(Spinner) : (isCreatingAccount ? 'Create Account' : 'Login'))
+              ]),
+              !isAdminLogin && React.createElement('div', {
+                  key: 5,
+                  className: "text-center mt-4"
+              }, React.createElement('button', {
+                  onClick: () => {
+                      setIsCreatingAccount(!isCreatingAccount);
+                      setLocalError(null);
+                      setSuccessMessage(null);
+                  },
+                  className: "text-sm text-gray-400 hover:text-red-500 transition"
+              }, isCreatingAccount ? 'Already have an account? Login' : 'Create an account'))
+          ]));
+      };
+
+      // Contract Dropdown Component
+      const ContractDropdown = ({ contracts }) => {
+          const [isOpen, setIsOpen] = React.useState(false);
+          
+          if (contracts.length === 0) {
+              return React.createElement('span', {
+                  className: "text-gray-500"
+              }, "None");
+          }
+
+          return React.createElement('div', {
+              className: "relative",
+              onMouseLeave: () => setIsOpen(false)
+          }, [
+              React.createElement('button', {
+                  key: 1,
+                  onMouseEnter: () => setIsOpen(true),
+                  className: "flex items-center gap-2 text-red-500 font-semibold"
+              }, [
+                  `View (${contracts.length})`,
+                  React.createElement(ChevronDownIcon, {
+                      key: 1,
+                      className: `w-4 h-4 transition-transform ${isOpen ? 'rotate-180' : ''}`
+                  })
+              ]),
+              isOpen && React.createElement('div', {
+                  key: 2,
+                  className: "absolute z-20 mt-2 w-64 bg-gray-700 border border-gray-600 rounded-md shadow-lg right-0"
+              }, React.createElement('ul', {
+                  className: "py-1"
+              }, contracts.map((contract, index) =>
+                  React.createElement('li', {
+                      key: index,
+                      className: "px-4 py-2 hover:bg-gray-600"
+                  }, React.createElement('a', {
+                      href: contract.fileURL,
+                      target: "_blank",
+                      rel: "noopener noreferrer",
+                      className: "flex items-center gap-2 text-sm text-gray-300"
+                  }, [
+                      React.createElement(FilePdfIcon, {
+                          key: 1,
+                          className: "w-4 h-4 text-red-400"
+                      }),
+                      React.createElement('span', {
+                          key: 2
+                      }, `[${contract.contractType}] ${contract.fileName}`)
+                  ]))
+              )))
+          ]);
+      };
+
+      // Add Contract Cell Component
+      const AddContractCell = ({ locatorId, onAddContract }) => {
+          const [isUploading, setIsUploading] = React.useState(false);
+          const [contractType, setContractType] = React.useState(ContractType.LOI);
+          const fileInputRef = React.useRef(null);
+
+          const handleFileChange = async (event) => {
+              const file = event.target.files?.[0];
+              if (file && onAddContract) {
+                  await onAddContract(locatorId, contractType, file);
+              }
+              setIsUploading(false);
+              if (fileInputRef.current) {
+                  fileInputRef.current.value = "";
+              }
+          };
+
+          return React.createElement('div', {
+              className: "flex items-center gap-2"
+          }, !isUploading ? [
+              React.createElement('button', {
+                  key: 1,
+                  onClick: () => setIsUploading(true),
+                  className: "text-sm bg-green-600 hover:bg-green-700 text-white font-semibold py-1 px-3 rounded"
+              }, "+ Add")
+          ] : [
+              React.createElement('select', {
+                  key: 1,
+                  value: contractType,
+                  onChange: (e) => setContractType(e.target.value),
+                  className: "text-xs bg-gray-600 border border-gray-500 rounded py-1 px-2"
+              }, CONTRACT_TYPES.map(type => 
+                  React.createElement('option', {
+                      key: type,
+                      value: type
+                  }, type)
+              )),
+              React.createElement('button', {
+                  key: 2,
+                  onClick: () => fileInputRef.current?.click(),
+                  className: "text-xs bg-blue-600 hover:bg-blue-700 text-white font-semibold py-1 px-2 rounded"
+              }, "Upload"),
+              React.createElement('button', {
+                  key: 3,
+                  onClick: () => setIsUploading(false),
+                  className: "text-xs text-gray-400 hover:text-white"
+              }, "Cancel"),
+              React.createElement('input', {
+                  key: 4,
+                  type: "file",
+                  ref: fileInputRef,
+                  onChange: handleFileChange,
+                  className: "hidden",
+                  accept: ".pdf"
+              })
+          ]);
+      };
+
+      // Data Table Component
+      const DataTable = ({ locators, isAdmin, onAddContract = null }) => {
+          const tableHeaders = ["Locator", "Address", "Lot Area (sqm)", "Industry Type", "Contracts"];
+
+          if (locators.length === 0) {
+              return React.createElement('div', {
+                  className: "text-center text-gray-400 py-8"
+              }, "No locators found.");
+          }
+
+          return React.createElement('div', {
+              className: "overflow-x-auto"
+          }, React.createElement('table', {
+              className: "w-full text-sm text-left text-gray-400"
+          }, [
+              React.createElement('thead', {
+                  key: 1,
+                  className: "text-xs text-gray-300 uppercase bg-gray-700"
+              }, React.createElement('tr', {}, tableHeaders.map(header =>
+                  React.createElement('th', {
+                      key: header,
+                      scope: "col",
+                      className: "px-6 py-3"
+                  }, header)
+              ))),
+              React.createElement('tbody', {
+                  key: 2
+              }, locators.map((locator) =>
+                  React.createElement('tr', {
+                      key: locator.LocatorID,
+                      className: "bg-gray-800 border-b border-gray-700 hover:bg-gray-700/50"
+                  }, [
+                      React.createElement('td', {
+                          key: 1,
+                          className: "px-6 py-4 font-medium text-white whitespace-nowrap"
+                      }, locator.LocatorName),
+                      React.createElement('td', {
+                          key: 2,
+                          className: "px-6 py-4"
+                      }, locator.Address),
+                      React.createElement('td', {
+                          key: 3,
+                          className: "px-6 py-4"
+                      }, locator.LotArea),
+                      React.createElement('td', {
+                          key: 4,
+                          className: "px-6 py-4"
+                      }, locator.IndustryType),
+                      React.createElement('td', {
+                          key: 5,
+                          className: "px-6 py-4"
+                      }, React.createElement('div', {
+                          className: "flex flex-col gap-2"
+                      }, [
+                          React.createElement(ContractDropdown, {
+                              key: 1,
+                              contracts: locator.contracts
+                          }),
+                          isAdmin && React.createElement(AddContractCell, {
+                              key: 2,
+                              locatorId: locator.LocatorID,
+                              onAddContract: onAddContract
+                          })
+                      ]))
+                  ])
+              ))
+          ]));
+      };
+
+      // Sidebar Component
+      const Sidebar = ({ selectedEstate, setSelectedEstate, logout }) => {
+          const menuItems = ['ALL', ...ESTATES];
+
+          return React.createElement('aside', {
+              className: "w-64 bg-gray-800 border-r border-gray-700 flex flex-col justify-between"
+          }, [
+              React.createElement('div', {
+                  key: 1
+              }, [
+                  React.createElement('div', {
+                      key: 1,
+                      className: "p-6"
+                  }, [
+                      React.createElement('h2', {
+                          key: 1,
+                          className: "text-xl font-bold text-white"
+                      }, "AIC Admin"),
+                      React.createElement('div', {
+                          key: 2,
+                          className: "h-0.5 w-16 bg-red-600 mt-2"
+                      })
+                  ]),
+                  React.createElement('nav', {
+                      key: 2,
+                      className: "mt-6"
+                  }, React.createElement('ul', {}, menuItems.map(estate =>
+                      React.createElement('li', {
+                          key: estate
+                      }, React.createElement('button', {
+                          onClick: () => setSelectedEstate(estate),
+                          className: `w-full text-left px-6 py-3 text-gray-300 hover:bg-gray-700 hover:text-white transition-colors duration-200 flex items-center ${selectedEstate === estate ? 'bg-gray-700 text-white border-r-4 border-red-600' : ''}`
+                      }, estate))
+                  )))
+              ]),
+              React.createElement('div', {
+                  key: 2,
+                  className: "p-6"
+              }, React.createElement('button', {
+                  onClick: logout,
+                  className: "w-full bg-gray-700 hover:bg-red-600 text-white font-bold py-2 px-4 rounded transition duration-300"
+              }, "Logout"))
+          ]);
+      };
+
+      // User Dashboard Component
+      const UserDashboard = () => {
+          const { state, logout } = useAppContext();
+          const [locators, setLocators] = React.useState([]);
+          const [isLoading, setIsLoading] = React.useState(true);
+          const [error, setError] = React.useState(null);
+          const [searchTerm, setSearchTerm] = React.useState('');
+
+          React.useEffect(() => {
+              const fetchLocators = async () => {
+                  if (!state.user?.estate) return;
+                  setIsLoading(true);
+                  setError(null);
+                  try {
+                      const response = await apiService.getLocators(state.user.estate);
+                      if (response.status === 'success') {
+                          setLocators(response.data);
+                      } else {
+                          setError(response.message || 'Failed to fetch data.');
+                      }
+                  } catch (err) {
+                      setError(err.message || 'An error occurred.');
+                  } finally {
+                      setIsLoading(false);
+                  }
+              };
+
+              fetchLocators();
+          }, [state.user]);
+
+          const filteredLocators = React.useMemo(() => {
+              return locators.filter(locator =>
+                  Object.values(locator).some(value =>
+                      String(value).toLowerCase().includes(searchTerm.toLowerCase())
+                  )
+              );
+          }, [locators, searchTerm]);
+          
+          const handleConvertToSheets = () => {
+              alert("This feature would export the current view to a new Google Sheet.");
+          };
+
+          if (isLoading && locators.length === 0) {
+              return React.createElement('div', {
+                  className: "min-h-screen flex items-center justify-center"
+              }, React.createElement(Spinner, { size: "lg" }));
+          }
+
+          return React.createElement('div', {
+              className: "min-h-screen bg-gray-900 p-4 sm:p-6 lg:p-8"
+          }, [
+              React.createElement('header', {
+                  key: 1,
+                  className: "flex flex-col sm:flex-row justify-between items-center mb-6"
+              }, [
+                  React.createElement('div', {
+                      key: 1
+                  }, [
+                      React.createElement('h1', {
+                          key: 1,
+                          className: "text-2xl font-bold text-white"
+                      }, "Contract Dashboard"),
+                      React.createElement('p', {
+                          key: 2,
+                          className: "text-red-500 font-semibold"
+                      }, state.user?.estate)
+                  ]),
+                  React.createElement('button', {
+                      key: 2,
+                      onClick: logout,
+                      className: "mt-4 sm:mt-0 bg-gray-700 hover:bg-red-600 text-white font-bold py-2 px-4 rounded transition duration-300"
+                  }, "Logout")
+              ]),
+              React.createElement('div', {
+                  key: 2,
+                  className: "bg-gray-800 p-6 rounded-lg shadow-lg border border-gray-700"
+              }, [
+                  React.createElement('div', {
+                      key: 1,
+                      className: "flex flex-col sm:flex-row justify-between items-center mb-4 gap-4"
+                  }, [
+                      React.createElement('button', {
+                          key: 1,
+                          onClick: handleConvertToSheets,
+                          className: "w-full sm:w-auto bg-green-600 hover:bg-green-700 text-white font-bold py-2 px-4 rounded transition duration-300"
+                      }, "Convert to Sheets"),
+                      React.createElement('input', {
+                          key: 2,
+                          type: "text",
+                          placeholder: "Search table...",
+                          value: searchTerm,
+                          onChange: e => setSearchTerm(e.target.value),
+                          className: "w-full sm:w-auto bg-gray-700 border border-gray-600 text-white rounded py-2 px-3 focus:outline-none focus:ring-2 focus:ring-red-500"
+                      })
+                  ]),
+                  error && React.createElement('p', {
+                      key: 2,
+                      className: "text-red-500 text-center mb-4"
+                  }, error),
+                  React.createElement(DataTable, {
+                      key: 3,
+                      locators: filteredLocators,
+                      isAdmin: false
+                  })
+              ])
+          ]);
+      };
+
+      // Admin Dashboard Component
+      const AdminDashboard = () => {
+          const { logout } = useAppContext();
+          const [locators, setLocators] = React.useState([]);
+          const [isLoading, setIsLoading] = React.useState(true);
+          const [error, setError] = React.useState(null);
+          const [searchTerm, setSearchTerm] = React.useState('');
+          const [isAddingLocator, setIsAddingLocator] = React.useState(false);
+          const [newLocator, setNewLocator] = React.useState({ 
+              estate: ESTATES[0], 
+              locatorName: '', 
+              address: '', 
+              lotArea: '', 
+              industryType: '' 
+          });
+          const [selectedEstate, setSelectedEstate] = React.useState('ALL');
+
+          const fetchAllData = React.useCallback(async () => {
+              setIsLoading(true);
+              setError(null);
+              try {
+                  const response = await apiService.getLocators();
+                  if (response.status === 'success') {
+                      setLocators(response.data);
+                  } else {
+                      setError(response.message || 'Failed to fetch data.');
+                  }
+              } catch (err) {
+                  setError(err.message || 'An error occurred.');
+              } finally {
+                  setIsLoading(false);
+              }
+          }, []);
+
+          React.useEffect(() => {
+              fetchAllData();
+          }, [fetchAllData]);
+          
+          const handleAddLocatorSubmit = async (e) => {
+              e.preventDefault();
+              setIsLoading(true);
+              try {
+                  const response = await apiService.addLocator(newLocator);
+                  if(response.status === 'success') {
+                      setLocators(prev => [...prev, response.data.newLocator]);
+                      setIsAddingLocator(false);
+                      setNewLocator({ estate: ESTATES[0], locatorName: '', address: '', lotArea: '', industryType: '' });
+                  } else {
+                      setError(response.message || 'Failed to add locator.');
+                  }
+              } catch (err) {
+                  setError(err.message || 'An error occurred.');
+              } finally {
+                  setIsLoading(false);
+              }
+          };
+
+          const handleAddContract = React.useCallback(async (locatorId, contractType, file) => {
+              setIsLoading(true);
+              try {
+                  const response = await apiService.uploadContract(locatorId, contractType, file);
+                  if(response.status === 'success'){
+                      setLocators(prevLocators => prevLocators.map(loc => {
+                          if(loc.LocatorID === locatorId) {
+                              return {...loc, contracts: [...loc.contracts, response.data.newContract]}
+                          }
+                          return loc;
+                      }));
+                  } else {
+                       setError(response.message || 'Failed to upload contract.');
+                  }
+              } catch(err){
+                  setError(err.message || 'An error occurred.');
+              } finally {
+                  setIsLoading(false);
+              }
+          }, []);
+
+          const filteredLocators = React.useMemo(() => {
+              return locators
+                  .filter(locator => selectedEstate === 'ALL' || locator.Estate === selectedEstate)
+                  .filter(locator =>
+                      Object.values(locator).some(value =>
+                          String(value).toLowerCase().includes(searchTerm.toLowerCase())
+                      )
+                  );
+          }, [locators, searchTerm, selectedEstate]);
+
+          return React.createElement('div', {
+              className: "min-h-screen flex bg-gray-900"
+          }, [
+              React.createElement(Sidebar, {
+                  key: 1,
+                  selectedEstate: selectedEstate,
+                  setSelectedEstate: setSelectedEstate,
+                  logout: logout
+              }),
+              React.createElement('main', {
+                  key: 2,
+                  className: "flex-1 p-4 sm:p-6 lg:p-8"
+              }, [
+                  React.createElement('header', {
+                      key: 1,
+                      className: "flex justify-between items-center mb-6"
+                  }, React.createElement('h1', {
+                      className: "text-2xl font-bold text-white"
+                  }, "Admin Dashboard")),
+                  React.createElement('div', {
+                      key: 2,
+                      className: "bg-gray-800 p-6 rounded-lg shadow-lg border border-gray-700"
+                  }, [
+                      React.createElement('div', {
+                          key: 1,
+                          className: "flex flex-col sm:flex-row justify-between items-center mb-4 gap-4"
+                      }, [
+                          React.createElement('button', {
+                              key: 1,
+                              onClick: () => setIsAddingLocator(!isAddingLocator),
+                              className: "w-full sm:w-auto bg-red-600 hover:bg-red-700 text-white font-bold py-2 px-4 rounded transition duration-300"
+                          }, isAddingLocator ? 'Cancel' : '+ Add Locator'),
+                          React.createElement('input', {
+                              key: 2,
+                              type: "text",
+                              placeholder: "Search table...",
+                              value: searchTerm,
+                              onChange: e => setSearchTerm(e.target.value),
+                              className: "w-full sm:w-auto bg-gray-700 border border-gray-600 text-white rounded py-2 px-3 focus:outline-none focus:ring-2 focus:ring-red-500"
+                          })
+                      ]),
+                      isAddingLocator && React.createElement('form', {
+                          key: 2,
+                          onSubmit: handleAddLocatorSubmit,
+                          className: "grid grid-cols-1 md:grid-cols-2 lg:grid-cols-5 gap-4 mb-6 p-4 bg-gray-700/50 rounded-lg"
+                      }, [
+                          React.createElement('select', {
+                              key: 1,
+                              value: newLocator.estate,
+                              onChange: e => setNewLocator({...newLocator, estate: e.target.value}),
+                              className: "bg-gray-700 border border-gray-600 rounded py-2 px-3"
+                          }, ESTATES.map(e => React.createElement('option', { key: e, value: e }, e))),
+                          React.createElement('input', {
+                              key: 2,
+                              type: "text",
+                              placeholder: "Locator Name",
+                              value: newLocator.locatorName,
+                              onChange: e => setNewLocator({...newLocator, locatorName: e.target.value}),
+                              className: "bg-gray-700 border border-gray-600 rounded py-2 px-3",
+                              required: true
+                          }),
+                          React.createElement('input', {
+                              key: 3,
+                              type: "text",
+                              placeholder: "Address",
+                              value: newLocator.address,
+                              onChange: e => setNewLocator({...newLocator, address: e.target.value}),
+                              className: "bg-gray-700 border border-gray-600 rounded py-2 px-3",
+                              required: true
+                          }),
+                          React.createElement('input', {
+                              key: 4,
+                              type: "text",
+                              placeholder: "Lot Area (sqm)",
+                              value: newLocator.lotArea,
+                              onChange: e => setNewLocator({...newLocator, lotArea: e.target.value}),
+                              className: "bg-gray-700 border border-gray-600 rounded py-2 px-3",
+                              required: true
+                          }),
+                          React.createElement('input', {
+                              key: 5,
+                              type: "text",
+                              placeholder: "Industry Type",
+                              value: newLocator.industryType,
+                              onChange: e => setNewLocator({...newLocator, industryType: e.target.value}),
+                              className: "bg-gray-700 border border-gray-600 rounded py-2 px-3",
+                              required: true
+                          }),
+                          React.createElement('button', {
+                              key: 6,
+                              type: "submit",
+                              disabled: isLoading,
+                              className: "md:col-span-2 lg:col-span-5 bg-green-600 hover:bg-green-700 text-white font-bold py-2 px-4 rounded transition duration-300 disabled:bg-gray-500"
+                          }, isLoading ? React.createElement(Spinner) : 'Save Locator')
+                      ]),
+                      error && React.createElement('p', {
+                          key: 3,
+                          className: "text-red-500 text-center mb-4"
+                      }, error),
+                      (isLoading && !isAddingLocator && locators.length === 0) ? 
+                          React.createElement('div', {
+                              key: 4,
+                              className: "flex justify-center p-8"
+                          }, React.createElement(Spinner, { size: "lg" })) : 
+                          React.createElement(DataTable, {
+                              key: 4,
+                              locators: filteredLocators,
+                              isAdmin: true,
+                              onAddContract: handleAddContract
+                          })
+                  ])
+              ])
+          ]);
+      };
+
+      // App Context and Main App Component
+      const initialState = {
+          user: null,
+          isLoading: false,
+          error: null,
+          isModalOpen: false,
+          modalEstate: null,
+      };
+
+      const appReducer = (state, action) => {
+          switch (action.type) {
+              case 'LOGIN_START':
+                  return { ...state, isLoading: true, error: null };
+              case 'LOGIN_SUCCESS':
+                  return { ...state, isLoading: false, user: action.payload, isModalOpen: false, modalEstate: null };
+              case 'LOGIN_FAIL':
+                  return { ...state, isLoading: false, error: action.payload };
+              case 'LOGOUT':
+                  return { ...initialState };
+              case 'OPEN_MODAL':
+                  return { ...state, isModalOpen: true, modalEstate: action.payload, error: null };
+              case 'CLOSE_MODAL':
+                  return { ...state, isModalOpen: false, modalEstate: null, error: null };
+              case 'SET_ERROR':
+                  return { ...state, error: action.payload };
+              default:
+                  return state;
+          }
+      };
+
+      const AppContext = React.createContext({
+          state: initialState,
+          dispatch: (action) => {},
+          logout: () => {},
+      });
+
+      const useAppContext = () => React.useContext(AppContext);
+
+      const App = () => {
+          const [state, dispatch] = React.useReducer(appReducer, initialState);
+          const mainContentRef = React.useRef(null);
+
+          const handleManageClick = () => {
+              mainContentRef.current?.scrollIntoView({ behavior: 'smooth' });
+          };
+          
+          const handleLogout = React.useCallback(() => {
+              dispatch({ type: 'LOGOUT' });
+          }, []);
+
+          const openModal = (estate) => {
+              dispatch({ type: 'OPEN_MODAL', payload: estate });
+          };
+
+          const closeModal = () => {
+              dispatch({ type: 'CLOSE_MODAL' });
+          };
+
+          return React.createElement(AppContext.Provider, {
+              value: { state, dispatch, logout: handleLogout }
+          }, React.createElement('div', {
+              className: "min-h-screen bg-gray-900 text-gray-200 font-sans"
+          }, [
+              state.isModalOpen && state.modalEstate && React.createElement(LoginModal, {
+                  key: 1,
+                  estate: state.modalEstate,
+                  onClose: closeModal
+              }),
+              state.user ? (
+                  state.user.role === 'admin' ? 
+                      React.createElement(AdminDashboard, { key: 2 }) : 
+                      React.createElement(UserDashboard, { key: 2 })
+              ) : [
+                  React.createElement(Header, {
+                      key: 2,
+                      onManageClick: handleManageClick
+                  }),
+                  React.createElement('main', {
+                      key: 3,
+                      ref: mainContentRef,
+                      className: "py-20 px-4"
+                  }, React.createElement(EstateSelector, {
+                      estates: ALL_ESTATES_WITH_ADMIN,
+                      onSelectEstate: openModal
+                  }))
+              ]
+          ]));
+      };
+
+      // Render the app
+      const root = ReactDOM.createRoot(document.getElementById('root'));
+      root.render(React.createElement(App));
+    </script>
+  </body>
+</html>
