@@ -1,0 +1,808 @@
+<script>
+// =================================================================
+// APP INITIALIZATION & STATE MANAGEMENT
+// =================================================================
+const appState = {
+  currentUser: null,
+  locators: [],
+  users: [],
+  currentView: 'home', // home, user, admin
+  currentAdminView: 'LIMA Estate', // estate name or 'users'
+  currentSelectedUserEstate: null,
+  isLoading: true,
+};
+
+// Enums (from former types.ts)
+const Role = { Admin: 'Admin', User: 'User' };
+const EstateName = {
+  LIMA: "LIMA Estate",
+  BIZHUB: "BizHub",
+  TARI: "TARI Estate",
+  MEZ2: "MEZ2 Estate",
+  WEST_CEBU: "WEST CEBU Estate",
+};
+const ContractType = {
+  LOI: 'LOI', RA: 'RA', CTS: 'CTS', DOAS: 'DOAS', LTLA: 'LTLA', LH: 'LH', KYC: 'KYC',
+};
+
+document.addEventListener('DOMContentLoaded', () => {
+  // Check if user is already logged in (e.g. session storage)
+  const loggedInUser = sessionStorage.getItem('currentUser');
+  if (loggedInUser) {
+    appState.currentUser = JSON.parse(loggedInUser);
+    initializeApp();
+  } else {
+    switchView('home');
+  }
+
+  // Attach initial event listeners
+  document.getElementById('home-login-button').addEventListener('click', () => renderLoginModal());
+});
+
+function initializeApp() {
+  showLoader(true);
+  google.script.run
+    .withSuccessHandler(data => {
+      appState.locators = data.locators || [];
+      appState.users = data.users || [];
+      
+      if (appState.currentUser.role === Role.Admin) {
+        switchView('admin');
+      } else {
+        switchView('user');
+      }
+      showLoader(false);
+    })
+    .withFailureHandler(handleError)
+    .getInitialData();
+}
+
+
+// =================================================================
+// VIEW & UI RENDERING
+// =================================================================
+
+function switchView(viewName) {
+  // Hide all main views
+  document.getElementById('home-view').style.display = 'none';
+  document.getElementById('user-dashboard-view').style.display = 'none';
+  document.getElementById('admin-view').style.display = 'none';
+  showLoader(false);
+
+  // Show the requested view
+  switch (viewName) {
+    case 'home':
+      document.getElementById('home-view').style.display = 'flex';
+      break;
+    case 'user':
+      document.getElementById('user-dashboard-view').style.display = 'block';
+      renderUserDashboard();
+      break;
+    case 'admin':
+      document.getElementById('admin-view').style.display = 'flex';
+      renderAdminView();
+      break;
+    case 'loader':
+       showLoader(true);
+       break;
+  }
+  appState.currentView = viewName;
+}
+
+function showLoader(show) {
+    document.getElementById('loader-view').style.display = show ? 'flex' : 'none';
+}
+
+function renderUserDashboard() {
+  const container = document.getElementById('user-dashboard-view');
+  if (!appState.currentUser) return;
+  
+  if (appState.currentSelectedUserEstate) {
+    const estateData = appState.locators.filter(loc => loc.estate === appState.currentSelectedUserEstate);
+    container.innerHTML = `
+      <div class="p-4 sm:p-6 md:p-8">
+        <div class="flex justify-between items-center mb-6">
+          <h1 class="text-3xl font-bold text-gray-900">${appState.currentSelectedUserEstate} - Contract Overview</h1>
+          <div>
+            ${appState.currentUser.accessibleEstates.length > 1 ? `
+              <button id="back-to-estates-btn" class="bg-gray-200 hover:bg-gray-300 text-gray-800 font-bold py-2 px-4 rounded transition-colors duration-300 mr-4">
+                Back to Estates
+              </button>` : ''}
+            <button id="user-logout-btn" class="bg-red-600 hover:bg-red-700 text-white font-bold py-2 px-4 rounded transition-colors duration-300">
+              Logout
+            </button>
+          </div>
+        </div>
+        <div id="user-estate-table-container"></div>
+      </div>`;
+    
+    document.getElementById('user-estate-table-container').innerHTML = renderEstateTable(estateData, false);
+
+    if (appState.currentUser.accessibleEstates.length > 1) {
+      document.getElementById('back-to-estates-btn').addEventListener('click', () => {
+        appState.currentSelectedUserEstate = null;
+        renderUserDashboard();
+      });
+    }
+    document.getElementById('user-logout-btn').addEventListener('click', handleLogout);
+
+  } else {
+    // Estate Selection Screen
+    container.innerHTML = `
+      <div class="min-h-screen flex flex-col items-center justify-center text-center p-4">
+        <h1 class="text-4xl font-bold text-gray-900 mb-2">Welcome, ${appState.currentUser.name}!</h1>
+        <p class="text-lg text-gray-600 mb-8">Please select an estate to view.</p>
+        <div class="w-full max-w-2xl mx-auto">
+          <div class="grid grid-cols-1 md:grid-cols-2 gap-6" id="user-estate-buttons">
+          </div>
+        </div>
+        <button id="user-logout-btn-2" class="mt-12 bg-gray-200 hover:bg-gray-300 text-gray-800 font-bold py-2 px-4 rounded transition-colors duration-300">
+          Logout
+        </button>
+      </div>`;
+      
+    const estateButtonsContainer = document.getElementById('user-estate-buttons');
+    appState.currentUser.accessibleEstates.forEach(estate => {
+      const btn = document.createElement('button');
+      btn.className = "bg-white border border-gray-200 p-8 rounded-lg text-gray-800 text-xl font-bold hover:bg-red-500 hover:text-white hover:border-red-500 transition-all duration-300 transform hover:-translate-y-1 shadow-md hover:shadow-lg";
+      btn.textContent = estate;
+      btn.onclick = () => {
+        appState.currentSelectedUserEstate = estate;
+        renderUserDashboard();
+      };
+      estateButtonsContainer.appendChild(btn);
+    });
+    document.getElementById('user-logout-btn-2').addEventListener('click', handleLogout);
+  }
+}
+
+function renderAdminView() {
+  document.getElementById('admin-sidebar-container').innerHTML = renderAdminSidebar();
+  renderAdminMainContent();
+  attachAdminSidebarListeners();
+}
+
+function renderAdminMainContent() {
+    const mainContent = document.getElementById('admin-main-content');
+    const view = appState.currentAdminView;
+
+    if (view === 'users') {
+        mainContent.innerHTML = `
+            <div class="flex justify-between items-center mb-6">
+                <h1 class="text-3xl font-bold text-gray-900">User Management</h1>
+            </div>
+            <div id="admin-users-table-container"></div>
+        `;
+        document.getElementById('admin-users-table-container').innerHTML = renderActiveUsersTable(appState.users);
+        attachActiveUsersListeners();
+    } else {
+        const estateData = appState.locators.filter(loc => loc.estate === view);
+        mainContent.innerHTML = `
+            <div class="flex justify-between items-center mb-6">
+                <h1 class="text-3xl font-bold text-gray-900">${view} - Admin View</h1>
+                <button id="add-locator-btn" class="bg-red-600 hover:bg-red-700 text-white font-bold py-2 px-4 rounded transition-colors duration-300 flex items-center shadow-md">
+                    <svg xmlns="http://www.w3.org/2000/svg" class="w-6 h-6 mr-2" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 6v6m0 0v6m0-6h6m-6 0H6" /></svg>
+                    Add Locator
+                </button>
+            </div>
+            <div id="admin-estate-table-container"></div>
+        `;
+        document.getElementById('admin-estate-table-container').innerHTML = renderEstateTable(estateData, true);
+        document.getElementById('add-locator-btn').addEventListener('click', () => renderAddLocatorForm());
+    }
+    attachTableListeners();
+}
+
+
+// =================================================================
+// COMPONENT & TABLE RENDERING
+// =================================================================
+
+function renderAdminSidebar() {
+  const currentView = appState.currentAdminView;
+  const estates = Object.values(EstateName);
+  
+  return `
+    <div class="w-64 bg-gray-800 border-r border-gray-700 h-full p-4 flex flex-col shadow-lg">
+      <h2 class="text-xl font-bold text-white mb-6 px-2">Admin Panel</h2>
+      <nav class="flex-1 flex flex-col space-y-1">
+        <h3 class="px-3 text-xs font-semibold text-gray-400 uppercase tracking-wider">Estates</h3>
+        ${estates.map(estate => `
+          <button data-view="${estate}" class="sidebar-btn flex items-center px-3 py-2 text-sm font-medium rounded-md transition-colors ${currentView === estate ? 'bg-red-600 text-white' : 'text-gray-300 hover:bg-gray-700 hover:text-white'}">
+            <svg xmlns="http://www.w3.org/2000/svg" class="mr-3 h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M19 21V5a2 2 0 00-2-2H7a2 2 0 00-2 2v16m14 0h2m-2 0h-5m-9 0H3m2 0h5M9 7h1m-1 4h1m4-4h1m-1 4h1m-5 10v-5a1 1 0 011-1h2a1 1 0 011 1v5m-4 0h4" /></svg>
+            ${estate}
+          </button>`).join('')}
+        <div class="border-t border-gray-700 my-4"></div>
+        <h3 class="px-3 text-xs font-semibold text-gray-400 uppercase tracking-wider">Monitoring</h3>
+        <button data-view="users" class="sidebar-btn flex items-center px-3 py-2 text-sm font-medium rounded-md transition-colors ${currentView === 'users' ? 'bg-red-600 text-white' : 'text-gray-300 hover:bg-gray-700 hover:text-white'}">
+            <svg xmlns="http://www.w3.org/2000/svg" class="mr-3 h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M12 4.354a4 4 0 110 5.292M15 21H3v-1a6 6 0 0112 0v1zm0 0h6v-1a6 6 0 00-9-5.197M15 21a6 6 0 00-9-5.197m9 5.197a6 6 0 00-3.373-5.629M3 21a6 6 0 019-5.197" /></svg>
+            User Management
+        </button>
+        <button id="create-user-btn" class="flex items-center px-3 py-2 text-sm font-medium rounded-md transition-colors text-gray-300 hover:bg-gray-700 hover:text-white">
+            <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="mr-3 h-5 w-5"><path stroke-linecap="round" stroke-linejoin="round" d="M19 7.5v3m0 0v3m0-3h3m-3 0h-3m-2.25-4.125a3.375 3.375 0 11-6.75 0 3.375 3.375 0 016.75 0zM4 19.235v-.11a6.375 6.375 0 0112.75 0v.109A12.318 12.318 0 0110.374 21c-2.331 0-4.512-.645-6.374-1.766z" /></svg>
+            Create User
+        </button>
+      </nav>
+      <div class="mt-auto pt-4 border-t border-gray-700">
+        <button id="admin-logout-btn" class="w-full flex items-center px-3 py-2 text-sm font-medium rounded-md transition-colors text-gray-300 hover:bg-gray-700 hover:text-white">
+            <svg xmlns="http://www.w3.org/2000/svg" class="mr-3 h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1" /></svg>
+            Logout
+        </button>
+      </div>
+    </div>`;
+}
+
+function renderEstateTable(data, isAdmin) {
+    const tableId = isAdmin ? 'admin-estate-table' : 'user-estate-table';
+    return `
+    <div class="bg-white p-6 rounded-lg shadow-md border border-gray-200">
+      <div class="flex justify-between items-start mb-4">
+        <button id="convert-sheets-btn-${tableId}" class="bg-green-600 hover:bg-green-700 text-white text-sm font-semibold py-1.5 px-3 rounded-md transition-colors duration-300 flex items-center shadow-sm">
+            <!-- FileIcon -->
+            <svg xmlns="http://www.w3.org/2000/svg" class="mr-2 h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"></path></svg>
+            Convert to Sheets
+        </button>
+        <div class="relative">
+          <input type="text" placeholder="Search..." id="search-input-${tableId}" class="bg-white border border-gray-300 rounded-full py-2 px-4 pl-10 text-gray-900 focus:outline-none focus:ring-2 focus:ring-red-500"/>
+          <div class="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
+            <!-- SearchIcon -->
+            <svg xmlns="http://www.w3.org/2000/svg" class="w-5 h-5 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"></path></svg>
+          </div>
+        </div>
+      </div>
+      <div class="overflow-x-auto">
+        <table class="min-w-full divide-y divide-gray-200">
+          <thead class="bg-gray-50">
+            <tr>
+              ${['Locator', 'Address', 'Lot Area (sqm)', 'Industry Type', 'Contracts'].map(h => `<th scope="col" class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">${h}</th>`).join('')}
+            </tr>
+          </thead>
+          <tbody id="table-body-${tableId}" class="bg-white divide-y divide-gray-200">
+            ${renderEstateTableRows(data)}
+          </tbody>
+        </table>
+        <p id="no-results-${tableId}" class="text-center text-gray-500 py-8" style="display: ${data.length ? 'none' : 'block'};">No records found.</p>
+      </div>
+    </div>`;
+}
+
+function renderEstateTableRows(data) {
+  return data.map((locator, index) => `
+      <tr class="${index % 2 === 0 ? 'bg-white' : 'bg-gray-50'} hover:bg-red-50 transition-colors" data-locator-id="${locator.id}">
+        <td class="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900">${locator.locator}</td>
+        <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-600">${locator.address}</td>
+        <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-600">${Number(locator.lotArea).toLocaleString()}</td>
+        <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-600">${locator.industryType}</td>
+        <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-600">
+            <div class="relative inline-block text-left" data-dropdown-id="${locator.id}">
+                ${renderContractDropdown(locator)}
+            </div>
+        </td>
+      </tr>
+    `).join('');
+}
+
+function renderContractDropdown(locator) {
+    const contracts = locator.contracts || [];
+    const hasContracts = contracts.length > 0;
+    const isAdmin = appState.currentUser.role === Role.Admin;
+
+    return `
+        <button type="button" class="contract-dropdown-btn inline-flex justify-center w-full rounded-md border border-gray-300 shadow-sm px-4 py-2 bg-white text-sm font-medium text-gray-700 hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-red-500" data-locator-id="${locator.id}">
+            ${hasContracts ? `View (${contracts.length})` : "No Contracts"}
+            <svg xmlns="http://www.w3.org/2000/svg" class="-mr-1 ml-2 h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7" /></svg>
+        </button>
+        <div class="contract-dropdown-menu origin-top-right absolute right-0 mt-2 w-56 rounded-md shadow-lg bg-white ring-1 ring-black ring-opacity-5 z-10" style="display: none;">
+            <div class="py-1" role="menu" aria-orientation="vertical">
+                ${contracts.map(c => `
+                    <a href="${c.fileUrl}" target="_blank" rel="noopener noreferrer" class="text-gray-700 group flex items-center px-4 py-2 text-sm hover:bg-gray-100" role="menuitem">
+                        <svg xmlns="http://www.w3.org/2000/svg" class="mr-3 h-5 w-5 text-gray-400 group-hover:text-gray-500" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" /></svg>
+                        <span>${c.type} - ${c.fileName}</span>
+                    </a>`).join('')}
+                ${!hasContracts && !isAdmin ? `<p class="text-gray-500 px-4 py-2 text-sm">No contracts available.</p>` : ''}
+                ${isAdmin ? `
+                    <div class="border-t border-gray-200 my-1"></div>
+                    <input type="file" class="hidden contract-file-input" data-locator-id="${locator.id}" accept=".pdf" />
+                    ${Object.values(ContractType).map(type => `
+                        <button class="add-contract-btn w-full text-left text-green-600 group flex items-center px-4 py-2 text-sm hover:bg-gray-100" data-contract-type="${type}" data-locator-id="${locator.id}">
+                           <svg xmlns="http://www.w3.org/2000/svg" class="mr-3 h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 6v6m0 0v6m0-6h6m-6 0H6" /></svg>
+                           Add ${type}
+                        </button>`).join('')}` 
+                : ''}
+            </div>
+        </div>`;
+}
+
+
+function renderActiveUsersTable(users) {
+    const headers = ['Name', 'Email', 'Role', 'Accessible Estates', 'IP Address', 'Last Activity', 'Actions'];
+    return `
+    <div class="bg-white p-6 rounded-lg shadow-md border border-gray-200">
+        <h2 class="text-xl font-bold text-gray-900 mb-4">User Management</h2>
+        <div class="overflow-x-auto">
+            <table class="min-w-full divide-y divide-gray-200">
+                <thead class="bg-gray-50">
+                    <tr>${headers.map(h => `<th scope="col" class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">${h}</th>`).join('')}</tr>
+                </thead>
+                <tbody class="bg-white divide-y divide-gray-200">
+                    ${users.map((user, index) => `
+                        <tr class="${index % 2 === 0 ? 'bg-white' : 'bg-gray-50'} hover:bg-red-50 transition-colors">
+                            <td class="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900">${user.name}</td>
+                            <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-600">${user.email}</td>
+                            <td class="px-6 py-4 whitespace-nowrap">
+                                <span class="px-3 py-1 text-xs rounded-full font-semibold ${user.role === Role.Admin ? 'bg-red-100 text-red-800' : 'bg-green-100 text-green-800'}">${user.role}</span>
+                            </td>
+                            <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-600">
+                               <div class="flex flex-wrap gap-1">
+                                    ${(user.accessibleEstates || []).map(estate => `<span class="px-2 py-1 text-xs font-medium bg-gray-200 text-gray-700 rounded-full">${estate}</span>`).join('')}
+                               </div>
+                            </td>
+                            <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-600">${user.ipAddress || 'N/A'}</td>
+                            <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-600">${user.lastActivity || 'N/A'}</td>
+                            <td class="px-6 py-4 whitespace-nowrap text-right text-sm font-medium">
+                                <button class="edit-user-btn text-red-600 hover:text-red-800 flex items-center gap-1 transition-colors" data-user-id="${user.id}">
+                                    <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.5L15.232 5.232z" /></svg>
+                                    Edit
+                                </button>
+                            </td>
+                        </tr>`).join('')}
+                </tbody>
+            </table>
+            ${users.length === 0 ? `<p class="text-center text-gray-500 py-8">No active users found.</p>` : ''}
+        </div>
+    </div>`;
+}
+
+// =================================================================
+// MODAL RENDERING
+// =================================================================
+
+function renderLoginModal() {
+  const modalHTML = `
+    <div id="login-modal" class="fixed inset-0 bg-black bg-opacity-60 flex justify-center items-center z-50">
+      <div class="bg-white p-8 rounded-lg shadow-xl w-full max-w-md border border-gray-200">
+        <h2 class="text-2xl font-bold mb-2 text-gray-900">System Login</h2>
+        <p class="text-gray-600 mb-6">Enter your credentials to access the system.</p>
+        <form id="login-form">
+          <div class="mb-4">
+            <label class="block text-gray-700 text-sm font-bold mb-2" for="email">Email</label>
+            <input id="login-email" type="email" class="w-full bg-gray-50 border border-gray-300 rounded py-2 px-3 text-gray-900 leading-tight focus:outline-none focus:ring-2 focus:ring-red-500" placeholder="user@example.com" required/>
+          </div>
+          <div class="mb-6">
+            <label class="block text-gray-700 text-sm font-bold mb-2" for="password">Password</label>
+            <input id="login-password" type="password" class="w-full bg-gray-50 border border-gray-300 rounded py-2 px-3 text-gray-900 leading-tight focus:outline-none focus:ring-2 focus:ring-red-500" placeholder="•••••••••" required/>
+          </div>
+          <div id="login-error-msg" class="text-red-600 text-sm italic mb-4" style="display: none;"></div>
+          <div class="flex items-center justify-between">
+            <button type="submit" class="bg-red-600 hover:bg-red-700 text-white font-bold py-2 px-4 rounded focus:outline-none focus:shadow-outline transition-colors duration-300">Sign In</button>
+            <button type="button" id="login-cancel-btn" class="inline-block align-baseline font-bold text-sm text-gray-600 hover:text-gray-900">Cancel</button>
+          </div>
+        </form>
+      </div>
+    </div>`;
+  document.getElementById('modals-container').innerHTML = modalHTML;
+  document.getElementById('login-form').addEventListener('submit', handleLoginSubmit);
+  document.getElementById('login-cancel-btn').addEventListener('click', closeModal);
+}
+
+function renderAddLocatorForm() {
+    const estate = appState.currentAdminView;
+    const modalHTML = `
+    <div id="add-locator-modal" class="fixed inset-0 bg-black bg-opacity-60 flex justify-center items-center z-50">
+        <div class="bg-white p-8 rounded-lg shadow-xl w-full max-w-lg border border-gray-200">
+            <h2 class="text-2xl font-bold mb-4 text-gray-900">Add New Locator to ${estate}</h2>
+            <form id="add-locator-form" class="space-y-4">
+                <input type="hidden" id="estate-name" value="${estate}">
+                <div>
+                    <label for="locator" class="block text-sm font-medium text-gray-700">Locator (e.g., L1-B2)</label>
+                    <input type="text" id="locator-id" class="mt-1 block w-full bg-gray-50 border border-gray-300 rounded-md py-2 px-3 text-gray-900 focus:outline-none focus:ring-2 focus:ring-red-500" required/>
+                </div>
+                <div>
+                    <label for="address" class="block text-sm font-medium text-gray-700">Address</label>
+                    <input type="text" id="locator-address" class="mt-1 block w-full bg-gray-50 border border-gray-300 rounded-md py-2 px-3 text-gray-900 focus:outline-none focus:ring-2 focus:ring-red-500" required/>
+                </div>
+                 <div>
+                    <label for="lotArea" class="block text-sm font-medium text-gray-700">Lot Area (sqm)</label>
+                    <input type="number" id="locator-lotArea" class="mt-1 block w-full bg-gray-50 border border-gray-300 rounded-md py-2 px-3 text-gray-900 focus:outline-none focus:ring-2 focus:ring-red-500" required/>
+                </div>
+                 <div>
+                    <label for="industryType" class="block text-sm font-medium text-gray-700">Industry Type</label>
+                    <input type="text" id="locator-industryType" class="mt-1 block w-full bg-gray-50 border border-gray-300 rounded-md py-2 px-3 text-gray-900 focus:outline-none focus:ring-2 focus:ring-red-500" required/>
+                </div>
+                <div id="form-error-msg" class="text-red-600 text-sm" style="display: none;"></div>
+                <div class="flex justify-end space-x-4 pt-4">
+                    <button type="button" id="form-cancel-btn" class="py-2 px-4 rounded-md text-gray-700 bg-white border border-gray-300 hover:bg-gray-50 transition-colors">Cancel</button>
+                    <button type="submit" class="py-2 px-4 rounded-md bg-red-600 hover:bg-red-700 text-white font-semibold transition-colors">Add Locator</button>
+                </div>
+            </form>
+        </div>
+    </div>`;
+    document.getElementById('modals-container').innerHTML = modalHTML;
+    document.getElementById('add-locator-form').addEventListener('submit', handleAddLocatorSubmit);
+    document.getElementById('form-cancel-btn').addEventListener('click', closeModal);
+}
+
+function renderCreateUserForm() {
+    const modalHTML = `
+    <div id="create-user-modal" class="fixed inset-0 bg-black bg-opacity-60 flex justify-center items-center z-50">
+        <div class="bg-white p-8 rounded-lg shadow-xl w-full max-w-lg border border-gray-200">
+            <h2 class="text-2xl font-bold mb-6 text-gray-900">Create New User</h2>
+            <form id="create-user-form" class="space-y-4">
+                <div>
+                    <label for="name" class="block text-sm font-medium text-gray-700">Full Name</label>
+                    <input type="text" id="create-user-name" class="mt-1 block w-full bg-gray-50 border border-gray-300 rounded-md py-2 px-3 text-gray-900 focus:outline-none focus:ring-2 focus:ring-red-500" required />
+                </div>
+                <div>
+                    <label for="email" class="block text-sm font-medium text-gray-700">Email Address</label>
+                    <input type="email" id="create-user-email" class="mt-1 block w-full bg-gray-50 border border-gray-300 rounded-md py-2 px-3 text-gray-900 focus:outline-none focus:ring-2 focus:ring-red-500" required />
+                </div>
+                <div>
+                    <label for="password" class="block text-sm font-medium text-gray-700">Password</label>
+                    <input type="password" id="create-user-password" class="mt-1 block w-full bg-gray-50 border border-gray-300 rounded-md py-2 px-3 text-gray-900 focus:outline-none focus:ring-2 focus:ring-red-500" required />
+                </div>
+                <div>
+                    <span class="block text-sm font-medium text-gray-700 mb-2">Role</span>
+                     <div class="flex items-center space-x-4">
+                        <label class="flex items-center space-x-2 text-gray-900 cursor-pointer">
+                            <input type="radio" name="role" value="${Role.User}" checked class="h-4 w-4 border-gray-300 text-red-600 focus:ring-red-500"/>
+                            <span>User</span>
+                        </label>
+                        <label class="flex items-center space-x-2 text-gray-900 cursor-pointer">
+                            <input type="radio" name="role" value="${Role.Admin}" class="h-4 w-4 border-gray-300 text-red-600 focus:ring-red-500"/>
+                            <span>Admin</span>
+                        </label>
+                    </div>
+                </div>
+                <div>
+                    <span class="block text-sm font-medium text-gray-700 mb-2">Accessible Estates</span>
+                    <div class="grid grid-cols-2 gap-2 p-3 bg-gray-50 rounded-md border border-gray-200">
+                        ${Object.values(EstateName).map(estate => `
+                            <label class="flex items-center space-x-3 text-gray-900">
+                                <input type="checkbox" name="accessibleEstates" value="${estate}" class="h-4 w-4 rounded border-gray-300 text-red-600 focus:ring-red-500"/>
+                                <span>${estate}</span>
+                            </label>`).join('')}
+                    </div>
+                </div>
+                <div id="form-error-msg" class="text-red-600 text-sm" style="display: none;"></div>
+                <div class="flex justify-end space-x-4 pt-4">
+                    <button type="button" id="form-cancel-btn" class="py-2 px-4 rounded-md text-gray-700 bg-white border border-gray-300 hover:bg-gray-50 transition-colors">Cancel</button>
+                    <button type="submit" class="py-2 px-4 rounded-md bg-red-600 hover:bg-red-700 text-white font-semibold transition-colors">Create User</button>
+                </div>
+            </form>
+        </div>
+    </div>`;
+    document.getElementById('modals-container').innerHTML = modalHTML;
+    document.getElementById('create-user-form').addEventListener('submit', handleCreateUserSubmit);
+    document.getElementById('form-cancel-btn').addEventListener('click', closeModal);
+}
+
+function renderEditUserForm(user) {
+    const modalHTML = `
+    <div id="edit-user-modal" class="fixed inset-0 bg-black bg-opacity-60 flex justify-center items-center z-50">
+        <div class="bg-white p-8 rounded-lg shadow-xl w-full max-w-lg border border-gray-200">
+            <h2 class="text-2xl font-bold mb-2 text-gray-900">Edit User Access</h2>
+            <p class="text-gray-600 mb-6">Modify details for <span class="font-bold text-gray-800">${user.name}</span>.</p>
+            <form id="edit-user-form" class="space-y-4">
+                <input type="hidden" id="edit-user-id" value="${user.id}">
+                <div>
+                    <span class="block text-sm font-medium text-gray-700 mb-2">Role</span>
+                     <div class="flex items-center space-x-4">
+                        <label class="flex items-center space-x-2 text-gray-900 cursor-pointer">
+                            <input type="radio" name="role" value="${Role.User}" ${user.role === Role.User ? 'checked' : ''} class="h-4 w-4 border-gray-300 text-red-600 focus:ring-red-500"/>
+                            <span>User</span>
+                        </label>
+                        <label class="flex items-center space-x-2 text-gray-900 cursor-pointer">
+                            <input type="radio" name="role" value="${Role.Admin}" ${user.role === Role.Admin ? 'checked' : ''} class="h-4 w-4 border-gray-300 text-red-600 focus:ring-red-500"/>
+                            <span>Admin</span>
+                        </label>
+                    </div>
+                </div>
+                <div>
+                    <span class="block text-sm font-medium text-gray-700 mb-2">Accessible Estates</span>
+                    <div class="grid grid-cols-2 gap-2 p-3 bg-gray-50 rounded-md border border-gray-200">
+                        ${Object.values(EstateName).map(estate => `
+                            <label class="flex items-center space-x-3 text-gray-900 cursor-pointer">
+                                <input type="checkbox" name="accessibleEstates" value="${estate}" ${(user.accessibleEstates || []).includes(estate) ? 'checked' : ''} class="h-4 w-4 rounded border-gray-300 text-red-600 focus:ring-red-500 cursor-pointer"/>
+                                <span>${estate}</span>
+                            </label>`).join('')}
+                    </div>
+                </div>
+                <div id="form-error-msg" class="text-red-600 text-sm" style="display: none;"></div>
+                <div class="flex justify-end space-x-4 pt-4">
+                    <button type="button" id="form-cancel-btn" class="py-2 px-4 rounded-md text-gray-700 bg-white border border-gray-300 hover:bg-gray-50 transition-colors">Cancel</button>
+                    <button type="submit" class="py-2 px-4 rounded-md bg-red-600 hover:bg-red-700 text-white font-semibold transition-colors">Update User</button>
+                </div>
+            </form>
+        </div>
+    </div>`;
+    document.getElementById('modals-container').innerHTML = modalHTML;
+    document.getElementById('edit-user-form').addEventListener('submit', handleEditUserSubmit);
+    document.getElementById('form-cancel-btn').addEventListener('click', closeModal);
+}
+
+
+function closeModal() {
+  document.getElementById('modals-container').innerHTML = '';
+}
+
+
+// =================================================================
+// EVENT LISTENERS & HANDLERS
+// =================================================================
+
+function attachAdminSidebarListeners() {
+  document.querySelectorAll('.sidebar-btn').forEach(btn => {
+    btn.addEventListener('click', (e) => {
+      const view = e.currentTarget.dataset.view;
+      appState.currentAdminView = view;
+      renderAdminView();
+    });
+  });
+  document.getElementById('create-user-btn').addEventListener('click', () => renderCreateUserForm());
+  document.getElementById('admin-logout-btn').addEventListener('click', handleLogout);
+}
+
+function attachActiveUsersListeners() {
+    document.querySelectorAll('.edit-user-btn').forEach(btn => {
+        btn.addEventListener('click', e => {
+            const userId = e.currentTarget.dataset.userId;
+            const user = appState.users.find(u => u.id == userId);
+            if (user) {
+                renderEditUserForm(user);
+            }
+        });
+    });
+}
+
+function attachTableListeners() {
+    // Search listener
+    const tableId = appState.currentUser.role === Role.Admin ? `admin-estate-table` : `user-estate-table`;
+    const searchInput = document.getElementById(`search-input-${tableId}`);
+    if (searchInput) {
+        searchInput.addEventListener('keyup', (e) => {
+            const searchTerm = e.target.value.toLowerCase();
+            const tableData = appState.currentUser.role === Role.Admin ? appState.locators.filter(l => l.estate === appState.currentAdminView) : appState.locators.filter(l => l.estate === appState.currentSelectedUserEstate);
+
+            const filteredData = tableData.filter(locator =>
+                locator.locator.toLowerCase().includes(searchTerm) ||
+                locator.address.toLowerCase().includes(searchTerm) ||
+                locator.industryType.toLowerCase().includes(searchTerm)
+            );
+            
+            document.getElementById(`table-body-${tableId}`).innerHTML = renderEstateTableRows(filteredData);
+            document.getElementById(`no-results-${tableId}`).style.display = filteredData.length ? 'none' : 'block';
+            attachTableListeners(); // Re-attach listeners for dropdowns in new rows
+        });
+    }
+
+    // Contract Dropdown listeners
+    document.querySelectorAll('.contract-dropdown-btn').forEach(btn => {
+        btn.addEventListener('click', e => {
+            e.stopPropagation();
+            const menu = e.currentTarget.nextElementSibling;
+            // Close all other menus
+            document.querySelectorAll('.contract-dropdown-menu').forEach(m => {
+                if(m !== menu) m.style.display = 'none';
+            });
+            menu.style.display = menu.style.display === 'none' ? 'block' : 'none';
+        });
+    });
+
+    // Add Contract listeners
+    document.querySelectorAll('.add-contract-btn').forEach(btn => {
+        btn.addEventListener('click', e => {
+            const locatorId = e.currentTarget.dataset.locatorId;
+            const contractType = e.currentTarget.dataset.contractType;
+            
+            const fileInput = document.querySelector(`.contract-file-input[data-locator-id="${locatorId}"]`);
+            fileInput.setAttribute('data-selected-contract-type', contractType);
+            fileInput.click();
+        });
+    });
+
+    // File input change listener - FIXED VERSION
+    document.querySelectorAll('.contract-file-input').forEach(input => {
+        input.addEventListener('change', handleFileChange);
+    });
+
+    // Global click to close dropdowns
+    window.onclick = function(event) {
+        if (!event.target.matches('.contract-dropdown-btn')) {
+            document.querySelectorAll('.contract-dropdown-menu').forEach(menu => {
+                menu.style.display = 'none';
+            });
+        }
+    }
+}
+
+function handleLoginSubmit(e) {
+  e.preventDefault();
+  const email = document.getElementById('login-email').value;
+  const password = document.getElementById('login-password').value;
+  const errorMsgEl = document.getElementById('login-error-msg');
+  
+  showLoader(true);
+  closeModal();
+
+  google.script.run
+    .withSuccessHandler(user => {
+      if (user) {
+        sessionStorage.setItem('currentUser', JSON.stringify(user));
+        appState.currentUser = user;
+        initializeApp();
+      } else {
+        switchView('home');
+        renderLoginModal();
+        document.getElementById('login-error-msg').textContent = 'Invalid credentials. Please try again.';
+        document.getElementById('login-error-msg').style.display = 'block';
+      }
+    })
+    .withFailureHandler(err => {
+        handleError(err);
+        switchView('home');
+        renderLoginModal();
+        document.getElementById('login-error-msg').textContent = 'An error occurred during login.';
+        document.getElementById('login-error-msg').style.display = 'block';
+    })
+    .authenticateUser(email, password);
+}
+
+function handleLogout() {
+    sessionStorage.removeItem('currentUser');
+    appState.currentUser = null;
+    appState.locators = [];
+    appState.users = [];
+    switchView('home');
+}
+
+function handleAddLocatorSubmit(e) {
+    e.preventDefault();
+    const locatorData = {
+        estate: document.getElementById('estate-name').value,
+        locator: document.getElementById('locator-id').value,
+        address: document.getElementById('locator-address').value,
+        lotArea: document.getElementById('locator-lotArea').value,
+        industryType: document.getElementById('locator-industryType').value
+    };
+
+    if (!locatorData.locator || !locatorData.address || !locatorData.lotArea || !locatorData.industryType) {
+        document.getElementById('form-error-msg').textContent = 'All fields are required.';
+        document.getElementById('form-error-msg').style.display = 'block';
+        return;
+    }
+
+    showLoader(true);
+    closeModal();
+    google.script.run
+        .withSuccessHandler(newLocator => {
+            appState.locators.push(newLocator);
+            renderAdminMainContent();
+            showLoader(false);
+        })
+        .withFailureHandler(handleError)
+        .addLocator(locatorData);
+}
+
+function handleCreateUserSubmit(e) {
+    e.preventDefault();
+    const accessibleEstates = Array.from(document.querySelectorAll('input[name="accessibleEstates"]:checked')).map(el => el.value);
+    
+    const userData = {
+        name: document.getElementById('create-user-name').value,
+        email: document.getElementById('create-user-email').value,
+        password: document.getElementById('create-user-password').value,
+        role: document.querySelector('input[name="role"]:checked').value,
+        accessibleEstates: accessibleEstates
+    };
+    
+    if (accessibleEstates.length === 0) {
+       document.getElementById('form-error-msg').textContent = 'User must have access to at least one estate.';
+       document.getElementById('form-error-msg').style.display = 'block';
+       return;
+    }
+
+    showLoader(true);
+    closeModal();
+    google.script.run
+        .withSuccessHandler(newUser => {
+            appState.users.push(newUser);
+            if (appState.currentAdminView === 'users') {
+                renderAdminMainContent();
+            }
+            showLoader(false);
+        })
+        .withFailureHandler(handleError)
+        .addUser(userData);
+}
+
+function handleEditUserSubmit(e) {
+    e.preventDefault();
+    const accessibleEstates = Array.from(document.querySelectorAll('input[name="accessibleEstates"]:checked')).map(el => el.value);
+    const userId = document.getElementById('edit-user-id').value;
+    const originalUser = appState.users.find(u => u.id == userId);
+    
+    const userData = {
+        ...originalUser,
+        role: document.querySelector('input[name="role"]:checked').value,
+        accessibleEstates: accessibleEstates
+    };
+
+    showLoader(true);
+    closeModal();
+    google.script.run
+        .withSuccessHandler(updatedUser => {
+            const index = appState.users.findIndex(u => u.id === updatedUser.id);
+            if (index !== -1) {
+                appState.users[index] = updatedUser;
+            }
+            if (appState.currentAdminView === 'users') {
+                renderAdminMainContent();
+            }
+            showLoader(false);
+        })
+        .withFailureHandler(handleError)
+        .updateUser(userData);
+}
+
+// FIXED FILE CHANGE HANDLER
+function handleFileChange(e) {
+    const file = e.target.files[0];
+    const locatorId = e.target.dataset.locatorId;
+    const contractType = e.target.getAttribute('data-selected-contract-type');
+
+    if (!file || !locatorId || !contractType) {
+        console.error('Missing file upload data:', { file: !!file, locatorId, contractType });
+        return;
+    }
+    
+    console.log('Starting file upload:', { locatorId, contractType, fileName: file.name });
+    showLoader(true);
+    
+    const reader = new FileReader();
+    reader.onload = function(e) {
+        const fileData = {
+            name: file.name,
+            mimeType: file.type,
+            data: e.target.result.split(',')[1] // Get base64 part
+        };
+        
+        console.log('File converted to base64, calling Apps Script...');
+        
+        google.script.run
+            .withSuccessHandler(result => {
+                console.log('Apps Script response:', result);
+                if (result.error) {
+                    handleError(result.error);
+                } else {
+                    // Update the local state
+                    const locIndex = appState.locators.findIndex(l => l.id == result.locatorId);
+                    if (locIndex > -1) {
+                        appState.locators[locIndex].contracts = result.updatedContracts;
+                    }
+                    // Re-render the table
+                    renderAdminMainContent();
+                    showLoader(false);
+                }
+            })
+            .withFailureHandler(error => {
+                console.error('Apps Script error:', error);
+                handleError(error);
+            })
+            .addContract(JSON.stringify(fileData), locatorId, contractType);
+    };
+    
+    reader.onerror = function(error) {
+        console.error('File reader error:', error);
+        handleError('Failed to read file');
+    };
+    
+    reader.readAsDataURL(file);
+}
+
+function handleError(error) {
+  console.error('An error occurred:', error);
+  alert('An unexpected error occurred: ' + error.message);
+  showLoader(false);
+}
+
+</script>

@@ -43,8 +43,12 @@ function doPost(e) {
     // Parse the request
     let requestData;
     try {
+      if (!e.postData || !e.postData.contents) {
+        return createErrorResponse('No data received', headers);
+      }
       requestData = JSON.parse(e.postData.contents);
     } catch (parseError) {
+      console.error('JSON parse error:', parseError);
       return createErrorResponse('Invalid JSON in request', headers);
     }
 
@@ -53,6 +57,8 @@ function doPost(e) {
     if (!action) {
       return createErrorResponse('Missing action parameter', headers);
     }
+
+    console.log('Processing action:', action, 'with payload:', payload);
 
     // Route to appropriate handler
     let result;
@@ -94,16 +100,21 @@ function doPost(e) {
 }
 
 function createErrorResponse(message, headers = {}) {
+  const defaultHeaders = {
+    'Access-Control-Allow-Origin': '*',
+    'Content-Type': 'application/json'
+  };
+  
   return ContentService
     .createTextOutput(JSON.stringify({
       status: 'error',
       message: message
     }))
     .setMimeType(ContentService.MimeType.JSON)
-    .setHeaders(headers);
+    .setHeaders({...defaultHeaders, ...headers});
 }
 
-function createSuccessResponse(data, message = 'Success', headers = {}) {
+function createSuccessResponse(data, message = 'Success') {
   return {
     status: 'success',
     data: data,
@@ -357,23 +368,29 @@ function handleAddLocator(payload) {
   }
 }
 
-// Handle add contract
+// Handle add contract - FIXED VERSION
 function handleAddContract(payload) {
   try {
+    console.log('handleAddContract called with payload:', payload);
+    
     const { locatorId, contractType, fileData } = payload;
     
     if (!locatorId || !contractType || !fileData) {
+      console.error('Missing required fields:', { locatorId, contractType, fileData: !!fileData });
       return { status: 'error', message: 'LocatorId, contractType, and fileData are required' };
     }
 
     const { base64, name, type } = fileData;
     
     if (!base64 || !name) {
+      console.error('File data incomplete:', { base64: !!base64, name, type });
       return { status: 'error', message: 'File data is incomplete' };
     }
 
+    console.log('Creating file in Drive...');
+    
     // Create file in Google Drive
-    const blob = Utilities.newBlob(Utilities.base64Decode(base64), type, name);
+    const blob = Utilities.newBlob(Utilities.base64Decode(base64), type || 'application/pdf', name);
     const folder = DriveApp.getFolderById(DRIVE_FOLDER_ID);
     const file = folder.createFile(blob);
     
@@ -382,6 +399,8 @@ function handleAddContract(payload) {
     
     const fileId = file.getId();
     const fileURL = `https://drive.google.com/file/d/${fileId}/view`;
+
+    console.log('File created successfully:', { fileId, fileURL });
 
     // Add contract to sheet
     const sheet = SpreadsheetApp.openById(SHEET_ID);
@@ -393,6 +412,8 @@ function handleAddContract(payload) {
 
     const newContractID = 'CON' + Date.now().toString().slice(-6);
     contractsSheet.appendRow([newContractID, locatorId, contractType, name, fileId, fileURL]);
+    
+    console.log('Contract added to sheet:', newContractID);
     
     const newContract = {
       ContractID: newContractID,

@@ -1,0 +1,33 @@
+<style>
+  /* Import Poppins Font */
+  @import url('https://fonts.googleapis.com/css2?family=Poppins:wght@300;400;500;600;700;800&display=swap');
+  
+  body {
+    font-family: 'Poppins', sans-serif;
+  }
+
+  /* Basic scrollbar styling for light theme */
+  ::-webkit-scrollbar {
+    width: 8px;
+  }
+  ::-webkit-scrollbar-track {
+    background: #e2e8f0; /* gray-200 */
+  }
+  ::-webkit-scrollbar-thumb {
+    background: #ef4444; /* red-500 */
+    border-radius: 4px;
+  }
+  ::-webkit-scrollbar-thumb:hover {
+    background: #dc2626; /* red-600 */
+  }
+  
+  /* Disable printing */
+  @media print {
+    html, body {
+      display: none !important;
+      visibility: hidden !important;
+    }
+  }
+</style>
+<!-- Tailwind CSS -->
+<script src="https://cdn.tailwindcss.com"></script>
