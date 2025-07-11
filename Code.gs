@@ -22,6 +22,11 @@ const ContractType = {
   OTHERS: "OTHERS"
 };
 
+// Required doGet function for web app
+function doGet(e) {
+  return HtmlService.createHtmlOutput('Web app is running. Use POST requests to interact with the API.');
+}
+
 function doPost(e) {
   try {
     // Enable CORS
